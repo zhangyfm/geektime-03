@@ -1,0 +1,109 @@
+作业1 ：用Spring Cloud Stream 访问 rabbit mq 与kafka
+我也花了一天时间在本地电脑安装docker ,但是就是安装失败;又尝试安装rabbit mq  电脑东西太杂软件安装失败报错，无法本地测试项目代码，
+现阅读了解课程中的实例代码，没有做改动内容。
+
+用Spring Cloud Stream 访问 rabbit mq
+waiter-service 
+使用consul 服务注册中心
+1、引入mq支持依赖
+		<dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-stream-rabbit</artifactId>
+        </dependency>
+2、引入MYsql 依赖，
+		<dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+
+3、配置
+	Stream，与rabbit mq 
+	spring.rabbitmq.host=localhost
+	spring.rabbitmq.port=5672
+	spring.rabbitmq.username=spring
+	spring.rabbitmq.password=spring
+	spring.cloud.stream.bindings.finishedOrders.group=waiter-service
+	数据库改为mysql ,因此连接数据源改为mysql 配置
+	spring.datasource.url=jdbc:mysql://localhost/springbucks?serverTimezone=GMT%2B8
+	spring.datasource.username=root
+	spring.datasource.password=a
+	
+4、消息连接Spring Cloud Stream 
+	@EnableBinding(Barista.class)//注解绑定一个消息接口
+	
+	@Input //要订阅的消息
+    SubscribableChannel finishedOrders();
+
+    @Output
+    MessageChannel newOrders();
+	
+	消息发送
+	if (state == OrderState.PAID) {
+            // 有返回值，如果要关注发送结果，则判断返回值
+            // 一般消息体不会这么简单
+            barista.newOrders().send(MessageBuilder.withPayload(order.getId()).build());
+    }
+	消息的消费 OrderListener.java
+	@StreamListener(Barista.FINISHED_ORDERS)
+    public void listenFinishedOrders(Long id) {
+        log.info("We've finished an order [{}].", id);
+    }
+	
+barista-service 订单制作
+
+1、引入mq支持依赖
+		<dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-stream-rabbit</artifactId>
+        </dependency>
+2、引入Mysql 依赖，
+		<dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+3、配置
+spring.datasource.url=jdbc:mysql://localhost/springbucks?serverTimezone=GMT%2B8
+#spring.datasource.username=springbucks
+##spring.datasource.password=springbucks
+spring.datasource.username=root
+spring.datasource.password=a
+spring.rabbitmq.host=localhost
+spring.rabbitmq.port=5672
+spring.rabbitmq.username=spring
+spring.rabbitmq.password=spring
+spring.cloud.stream.bindings.newOrders.group=barista-service
+
+4、消息连接
+@EnableBinding(Waiter.class) //绑定注解
+
+	@Input(NEW_ORDERS)//消息的订阅
+    SubscribableChannel newOrders();
+
+    @Output(FINISHED_ORDERS)//发送消息
+    MessageChannel finishedOrders();
+	
+	消息的消费 OrderListener.java
+	@Autowired
+    @Qualifier(Waiter.FINISHED_ORDERS)
+    private MessageChannel finishedOrdersMessageChannel;
+    @Value("${order.barista-prefix}${random.uuid}")
+    private String barista;
+
+    @StreamListener(Waiter.NEW_ORDERS)
+    public void processNewOrder(Long id) {
+        CoffeeOrder o = orderRepository.getOne(id);
+        if (o == null) {
+            log.warn("Order id {} is NOT valid.", id);
+            return;
+        }
+        log.info("Receive a new Order {}. Waiter: {}. Customer: {}",
+                id, o.getWaiter(), o.getCustomer());
+        o.setState(OrderState.BREWED);
+        o.setBarista(barista);
+        orderRepository.save(o);
+        log.info("Order {} is READY.", id);
+        finishedOrdersMessageChannel.send(MessageBuilder.withPayload(id).build());//消息发送
+    }
